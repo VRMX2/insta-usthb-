@@ -3,12 +3,201 @@ import 'package:flutter/services.dart';
 import 'package:sizer/sizer.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
-
-// Import your existing services
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:crypto/crypto.dart';
 import 'package:instaappusthb/services/auth_sevice.dart';
+import 'package:instaappusthb/presentation/qr_code_screen/qr_code_screen.dart';
+import 'package:instaappusthb/presentation/settings_screen/settings_screen.dart';
+
+class CloudinaryService {
+  // Replace these with your actual Cloudinary credentials
+  static const String cloudName = 'dmck7lqxj';
+  static const String apiKey = '434632322242715';
+  static const String apiSecret = 'MpcTfy_R9JQPNGjlvl9COQn2Zjo';
+  static const String uploadPreset = 'first_time_use'; // For unsigned uploads
+
+  // For signed uploads (more secure)
+  static String generateSignature(Map<String, String> params) {
+    // Sort parameters alphabetically
+    var sortedParams = Map.fromEntries(
+        params.entries.toList()..sort((a, b) => a.key.compareTo(b.key))
+    );
+
+    // Create parameter string
+    String paramString = sortedParams.entries
+        .map((entry) => '${entry.key}=${entry.value}')
+        .join('&');
+
+    // Add API secret
+    paramString += apiSecret;
+
+    // Generate SHA1 hash
+    var bytes = utf8.encode(paramString);
+    var digest = sha1.convert(bytes);
+
+    return digest.toString();
+  }
+
+  // Upload image to Cloudinary (unsigned upload - easier setup)
+  static Future<String?> uploadImageUnsigned(File imageFile, {
+    String? publicId,
+    String folder = 'profile_images',
+    Function(double)? onProgress,
+  }) async {
+    try {
+      final uri = Uri.parse('https://api.cloudinary.com/v1_1/$cloudName/image/upload');
+
+      var request = http.MultipartRequest('POST', uri);
+
+      // Add the image file
+      request.files.add(await http.MultipartFile.fromPath('file', imageFile.path));
+
+      // Add upload parameters
+      request.fields['upload_preset'] = uploadPreset;
+      request.fields['folder'] = folder;
+
+      if (publicId != null) {
+        request.fields['public_id'] = publicId;
+      }
+
+      // Optional: Add transformations
+      request.fields['transformation'] = 'c_fill,w_400,h_400,q_auto';
+
+      // Send request with progress tracking
+      var streamedResponse = await request.send();
+      var response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200) {
+        var data = json.decode(response.body);
+        return data['secure_url'] as String;
+      } else {
+        print('Upload failed: ${response.body}');
+        return null;
+      }
+    } catch (e) {
+      print('Upload error: $e');
+      return null;
+    }
+  }
+
+  // Upload image to Cloudinary (signed upload - more secure)
+  static Future<String?> uploadImageSigned(File imageFile, {
+    String? publicId,
+    String folder = 'profile_images',
+    Function(double)? onProgress,
+  }) async {
+    try {
+      final timestamp = DateTime.now().millisecondsSinceEpoch.toString();
+      final uri = Uri.parse('https://api.cloudinary.com/v1_1/$cloudName/image/upload');
+
+      // Prepare parameters for signature
+      Map<String, String> params = {
+        'timestamp': timestamp,
+        'folder': folder,
+        'transformation': 'c_fill,w_400,h_400,q_auto',
+      };
+
+      if (publicId != null) {
+        params['public_id'] = publicId;
+      }
+
+      // Generate signature
+      String signature = generateSignature(params);
+
+      var request = http.MultipartRequest('POST', uri);
+
+      // Add the image file
+      request.files.add(await http.MultipartFile.fromPath('file', imageFile.path));
+
+      // Add all parameters
+      request.fields.addAll(params);
+      request.fields['api_key'] = apiKey;
+      request.fields['signature'] = signature;
+
+      // Send request
+      var streamedResponse = await request.send();
+      var response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200) {
+        var data = json.decode(response.body);
+        return data['secure_url'] as String;
+      } else {
+        print('Upload failed: ${response.body}');
+        return null;
+      }
+    } catch (e) {
+      print('Upload error: $e');
+      return null;
+    }
+  }
+
+  // Delete image from Cloudinary
+  static Future<bool> deleteImage(String publicId) async {
+    try {
+      final timestamp = DateTime.now().millisecondsSinceEpoch.toString();
+
+      Map<String, String> params = {
+        'public_id': publicId,
+        'timestamp': timestamp,
+      };
+
+      String signature = generateSignature(params);
+
+      final uri = Uri.parse('https://api.cloudinary.com/v1_1/$cloudName/image/destroy');
+
+      var response = await http.post(
+        uri,
+        body: {
+          'public_id': publicId,
+          'timestamp': timestamp,
+          'api_key': apiKey,
+          'signature': signature,
+        },
+      );
+
+      if (response.statusCode == 200) {
+        var data = json.decode(response.body);
+        return data['result'] == 'ok';
+      }
+
+      return false;
+    } catch (e) {
+      print('Delete error: $e');
+      return false;
+    }
+  }
+
+  // Extract public ID from Cloudinary URL
+  static String? extractPublicId(String cloudinaryUrl) {
+    try {
+      final uri = Uri.parse(cloudinaryUrl);
+      final pathSegments = uri.pathSegments;
+
+      // Find the index after 'image/upload' or 'video/upload'
+      int uploadIndex = pathSegments.indexOf('upload');
+      if (uploadIndex != -1 && uploadIndex < pathSegments.length - 1) {
+        // Get all segments after 'upload' and join them
+        final publicIdSegments = pathSegments.sublist(uploadIndex + 1);
+        String publicId = publicIdSegments.join('/');
+
+        // Remove file extension
+        if (publicId.contains('.')) {
+          publicId = publicId.substring(0, publicId.lastIndexOf('.'));
+        }
+
+        return publicId;
+      }
+
+      return null;
+    } catch (e) {
+      print('Error extracting public ID: $e');
+      return null;
+    }
+  }
+}
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
@@ -34,10 +223,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   bool _isLoading = true;
   bool _isSaving = false;
   bool _hasChanges = false;
+  bool _isUploadingImage = false;
+  double _uploadProgress = 0.0;
   String? _selectedAcademicYear;
   String? _selectedSpecialty;
   File? _newProfileImage;
   String? _profileImageUrl;
+  String? _previousImagePublicId; // Store previous image public ID for deletion
 
   // Form validation
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
@@ -77,6 +269,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           _selectedAcademicYear = userData.academicYear;
           _selectedSpecialty = userData.specialty;
           _profileImageUrl = userData.profileImageUrl;
+
+          // Extract public ID if there's an existing image
+          if (_profileImageUrl != null) {
+            _previousImagePublicId = CloudinaryService.extractPublicId(_profileImageUrl!);
+          }
+
           _isLoading = false;
         });
 
@@ -167,6 +365,34 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         _selectedSpecialty != null;
   }
 
+  // Navigate to QR Code Screen
+  Future<void> _navigateToQRCode() async {
+    try {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => QRCodeScreen(),
+        ),
+      );
+    } catch (e) {
+      _showErrorSnackBar('Erreur lors de l\'ouverture du code QR');
+    }
+  }
+
+  // Navigate to Settings Screen
+  Future<void> _navigateToSettings() async {
+    try {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => SettingsScreen(),
+        ),
+      );
+    } catch (e) {
+      _showErrorSnackBar('Erreur lors de l\'ouverture des paramètres');
+    }
+  }
+
   Future<void> _pickProfileImage() async {
     try {
       showModalBottomSheet(
@@ -187,35 +413,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 ),
               ),
               SizedBox(height: 3.h),
-              // FIXED: Wrap with SingleChildScrollView and use flexible layout
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    _buildImageSourceOption(
-                      icon: Icons.camera_alt,
-                      label: 'Appareil photo',
-                      source: ImageSource.camera,
-                    ),
-                    SizedBox(width: 4.w),
-                    _buildImageSourceOption(
-                      icon: Icons.photo_library,
-                      label: 'Galerie',
-                      source: ImageSource.gallery,
-                    ),
-                    if (_profileImageUrl != null || _newProfileImage != null) ...[
-                      SizedBox(width: 4.w),
-                      _buildImageSourceOption(
-                        icon: Icons.delete,
-                        label: 'Supprimer',
-                        onTap: _removeProfileImage,
-                        isDestructive: true,
-                      ),
-                    ],
-                  ],
-                ),
-              ),
+              _buildImageSourceOptions(),
               SizedBox(height: 2.h),
             ],
           ),
@@ -224,6 +422,52 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     } catch (e) {
       _showErrorSnackBar('Erreur lors de la sélection de la photo');
     }
+  }
+
+  Widget _buildImageSourceOptions() {
+    final hasDeleteOption = _profileImageUrl != null || _newProfileImage != null;
+
+    return Column(
+      children: [
+        // First row: Camera and Gallery
+        Row(
+          children: [
+            Expanded(
+              child: _buildImageSourceOption(
+                icon: Icons.camera_alt,
+                label: 'Appareil photo',
+                source: ImageSource.camera,
+              ),
+            ),
+            SizedBox(width: 4.w),
+            Expanded(
+              child: _buildImageSourceOption(
+                icon: Icons.photo_library,
+                label: 'Galerie',
+                source: ImageSource.gallery,
+              ),
+            ),
+          ],
+        ),
+        // Second row: Delete option (if available)
+        if (hasDeleteOption) ...[
+          SizedBox(height: 2.h),
+          Row(
+            children: [
+              Expanded(
+                child: _buildImageSourceOption(
+                  icon: Icons.delete,
+                  label: 'Supprimer',
+                  onTap: _removeProfileImage,
+                  isDestructive: true,
+                ),
+              ),
+              Expanded(child: SizedBox()), // Empty space to balance the layout
+            ],
+          ),
+        ],
+      ],
+    );
   }
 
   Widget _buildImageSourceOption({
@@ -243,20 +487,24 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         }
       },
       child: Container(
-        // FIXED: Add constraints to prevent overflow
-        constraints: BoxConstraints(
-          minWidth: 20.w,
-          maxWidth: 25.w,
+        padding: EdgeInsets.symmetric(vertical: 2.h, horizontal: 2.w),
+        decoration: BoxDecoration(
+          color: isDestructive ? Colors.red.withOpacity(0.1) : Colors.grey[100],
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isDestructive ? Colors.red.withOpacity(0.3) : Colors.grey[300]!,
+          ),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Container(
-              width: 15.w,
-              height: 15.w,
+              width: 12.w,
+              height: 12.w,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: isDestructive ? Colors.red.withOpacity(0.1) : Colors.grey[100],
+                color: isDestructive ? Colors.red.withOpacity(0.2) : Colors.white,
               ),
               child: Icon(
                 icon,
@@ -265,7 +513,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               ),
             ),
             SizedBox(height: 1.h),
-            // FIXED: Add flexible text with overflow handling
             Text(
               label,
               textAlign: TextAlign.center,
@@ -371,18 +618,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         updateData['specialty'] = _selectedSpecialty!;
       }
 
-      // Handle profile image
+      // Handle profile image with Cloudinary
       if (_newProfileImage != null) {
-        _showLoadingDialog('Téléchargement de la photo...');
-        final imageUrl = await _uploadProfileImage(_newProfileImage!);
-        Navigator.pop(context); // Close loading dialog
-
-        if (imageUrl != null) {
-          updateData['profileImageUrl'] = imageUrl;
-          _profileImageUrl = imageUrl;
-        }
+        await _handleProfileImageUpdate(updateData);
       } else if (_profileImageUrl == null && _userData!.profileImageUrl != null) {
-        // User removed profile image
+        // User removed profile image - delete from Cloudinary
+        if (_previousImagePublicId != null) {
+          await CloudinaryService.deleteImage(_previousImagePublicId!);
+        }
         updateData['profileImageUrl'] = null;
       }
 
@@ -414,7 +657,55 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
     setState(() {
       _isSaving = false;
+      _isUploadingImage = false;
+      _uploadProgress = 0.0;
     });
+  }
+
+  Future<void> _handleProfileImageUpdate(Map<String, dynamic> updateData) async {
+    setState(() {
+      _isUploadingImage = true;
+      _uploadProgress = 0.0;
+    });
+
+    try {
+      // Generate unique public ID for the image
+      final currentUserId = _authService.currentUser?.uid;
+      final publicId = '${currentUserId}_${DateTime.now().millisecondsSinceEpoch}';
+
+      // Upload new image to Cloudinary
+      _showUploadProgress('Téléchargement de la photo...');
+
+      final imageUrl = await CloudinaryService.uploadImageUnsigned(
+        _newProfileImage!,
+        publicId: publicId,
+        folder: 'profile_images',
+        onProgress: (progress) {
+          setState(() {
+            _uploadProgress = progress;
+          });
+        },
+      );
+
+      if (imageUrl != null) {
+        // Delete previous image if it exists
+        if (_previousImagePublicId != null) {
+          await CloudinaryService.deleteImage(_previousImagePublicId!);
+        }
+
+        updateData['profileImageUrl'] = imageUrl;
+        _profileImageUrl = imageUrl;
+        _previousImagePublicId = publicId;
+
+        Navigator.pop(context); // Close progress dialog
+      } else {
+        Navigator.pop(context); // Close progress dialog
+        throw Exception('Échec du téléchargement de l\'image');
+      }
+    } catch (e) {
+      Navigator.pop(context); // Close progress dialog
+      throw Exception('Erreur lors du téléchargement de l\'image: ${e.toString()}');
+    }
   }
 
   Future<void> _updateEmail(String newEmail) async {
@@ -424,12 +715,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         throw Exception('Utilisateur non connecté');
       }
 
-      // CORRECTED: Use verifyBeforeUpdateEmail instead of updateEmail
       await user.verifyBeforeUpdateEmail(newEmail);
-
       _showSuccessSnackBar('Un email de vérification a été envoyé à votre nouvelle adresse. Veuillez le confirmer pour finaliser le changement.');
     } on FirebaseAuthException catch (e) {
-      // Handle specific Firebase Auth errors
       String errorMessage;
       switch (e.code) {
         case 'requires-recent-login':
@@ -450,22 +738,34 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
   }
 
-  Future<String?> _uploadProfileImage(File imageFile) async {
-    try {
-      final currentUserId = _authService.currentUser?.uid;
-      if (currentUserId == null) return null;
-
-      final storageRef = FirebaseStorage.instance
-          .ref()
-          .child('profile_images')
-          .child('${currentUserId}_${DateTime.now().millisecondsSinceEpoch}.jpg');
-
-      final uploadTask = storageRef.putFile(imageFile);
-      final snapshot = await uploadTask;
-      return await snapshot.ref.getDownloadURL();
-    } catch (e) {
-      throw Exception('Erreur lors du téléchargement de l\'image');
-    }
+  void _showUploadProgress(String message) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(
+              color: Colors.blue,
+              value: _uploadProgress > 0 ? _uploadProgress / 100 : null,
+            ),
+            SizedBox(height: 2.h),
+            Text(message),
+            if (_uploadProgress > 0) ...[
+              SizedBox(height: 1.h),
+              Text(
+                '${_uploadProgress.toInt()}%',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.blue,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 
   void _showLoadingDialog(String message) {
@@ -602,8 +902,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       ),
       actions: [
         TextButton(
-          onPressed: _isSaving || !_hasChanges || !_isFormValid ? null : _saveProfile,
-          child: _isSaving
+          onPressed: (_isSaving || _isUploadingImage || !_hasChanges || !_isFormValid) ? null : _saveProfile,
+          child: (_isSaving || _isUploadingImage)
               ? SizedBox(
             width: 4.w,
             height: 4.w,
@@ -639,7 +939,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             _buildAcademicInfoSection(),
             SizedBox(height: 3.h),
             _buildBioSection(),
-            SizedBox(height: 6.h),
+            SizedBox(height: 4.h),
+            _buildQuickActionsSection(),
+            SizedBox(height: 4.h),
             _buildDeleteAccountButton(),
           ],
         ),
@@ -651,7 +953,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     return Column(
       children: [
         GestureDetector(
-          onTap: _pickProfileImage,
+          onTap: _isUploadingImage ? null : _pickProfileImage,
           child: Stack(
             children: [
               Container(
@@ -685,11 +987,19 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   width: 8.w,
                   height: 8.w,
                   decoration: BoxDecoration(
-                    color: Colors.blue,
+                    color: _isUploadingImage ? Colors.grey : Colors.blue,
                     shape: BoxShape.circle,
                     border: Border.all(color: Colors.white, width: 2),
                   ),
-                  child: Icon(
+                  child: _isUploadingImage
+                      ? Padding(
+                    padding: EdgeInsets.all(1.w),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.5,
+                      color: Colors.white,
+                    ),
+                  )
+                      : Icon(
                     Icons.camera_alt,
                     color: Colors.white,
                     size: 4.w,
@@ -701,13 +1011,33 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         ),
         SizedBox(height: 2.h),
         Text(
-          'Changer la photo de profil',
+          _isUploadingImage ? 'Téléchargement...' : 'Changer la photo de profil',
           style: TextStyle(
-            color: Colors.blue,
+            color: _isUploadingImage ? Colors.grey : Colors.blue,
             fontSize: 14.sp,
             fontWeight: FontWeight.w600,
           ),
         ),
+        if (_isUploadingImage && _uploadProgress > 0) ...[
+          SizedBox(height: 1.h),
+          Container(
+            width: 50.w,
+            child: LinearProgressIndicator(
+              value: _uploadProgress / 100,
+              backgroundColor: Colors.grey[300],
+              valueColor: AlwaysStoppedAnimation<Color>(Colors.blue),
+            ),
+          ),
+          SizedBox(height: 0.5.h),
+          Text(
+            '${_uploadProgress.toInt()}%',
+            style: TextStyle(
+              color: Colors.blue,
+              fontSize: 12.sp,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -809,6 +1139,96 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           hint: 'Parlez-nous de vous...',
         ),
       ],
+    );
+  }
+
+  // Updated Quick Actions Section with both QR Code and Settings
+  Widget _buildQuickActionsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionTitle('Actions rapides'),
+        SizedBox(height: 2.h),
+        Row(
+          children: [
+            Expanded(
+              child: _buildActionCard(
+                icon: Icons.qr_code,
+                title: 'Code QR',
+                subtitle: 'Partager mon profil',
+                color: Colors.blue,
+                onTap: _navigateToQRCode,
+              ),
+            ),
+            SizedBox(width: 3.w),
+            Expanded(
+              child: _buildActionCard(
+                icon: Icons.settings,
+                title: 'Paramètres',
+                subtitle: 'Gérer mon compte',
+                color: Colors.grey[700]!,
+                onTap: _navigateToSettings,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildActionCard({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: EdgeInsets.all(4.w),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: color.withOpacity(0.2)),
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: 12.w,
+              height: 12.w,
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                icon,
+                color: Colors.white,
+                size: 6.w,
+              ),
+            ),
+            SizedBox(height: 2.h),
+            Text(
+              title,
+              style: TextStyle(
+                fontSize: 16.sp,
+                fontWeight: FontWeight.w600,
+                color: Colors.black,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            SizedBox(height: 0.5.h),
+            Text(
+              subtitle,
+              style: TextStyle(
+                fontSize: 12.sp,
+                color: Colors.grey[600],
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -983,6 +1403,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Future<void> _deleteAccount() async {
     try {
       _showLoadingDialog('Suppression du compte...');
+
+      // Delete profile image from Cloudinary if exists
+      if (_previousImagePublicId != null) {
+        await CloudinaryService.deleteImage(_previousImagePublicId!);
+      }
 
       final result = await _authService.deleteCurrentUserAccount();
 

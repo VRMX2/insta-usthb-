@@ -7,6 +7,7 @@ import 'package:instaappusthb/core/app_export.dart';
 import 'package:instaappusthb/services/auth_sevice.dart';
 import 'package:instaappusthb/services/post_service.dart';
 import 'package:instaappusthb/presentation/profile_screen/profile_screen.dart';
+import 'package:instaappusthb/presentation/post_screen/post_screen.dart';
 import 'package:flutter/rendering.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -161,7 +162,7 @@ class _HomeScreenState extends State<HomeScreen>
               // Search Screen
               _buildSearchScreen(),
               // Create Post Screen
-              _buildCreatePostScreen(),
+              const CreatePostScreen(),
               // Activity Screen
               _buildActivityScreen(),
               // Profile Screen - Use the ProfileScreen widget
@@ -655,7 +656,7 @@ class _HomeScreenState extends State<HomeScreen>
             ),
             SizedBox(height: 1.h),
             Text(
-              'Commencez à suivre des personnes pour voir leurs publications',
+              'Créez votre première publication ou découvrez d\'autres personnes',
               style: TextStyle(
                 color: Colors.grey.shade500,
                 fontSize: 14.sp,
@@ -663,23 +664,59 @@ class _HomeScreenState extends State<HomeScreen>
               textAlign: TextAlign.center,
             ),
             SizedBox(height: 3.h),
-            ElevatedButton(
-              onPressed: () => setState(() => _selectedBottomIndex = 1),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue,
-                foregroundColor: Colors.white,
-                padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 2.h),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ElevatedButton(
+                  onPressed: () => setState(() => _selectedBottomIndex = 2),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                    padding: EdgeInsets.symmetric(horizontal: 6.w, vertical: 1.5.h),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.add_rounded, size: 4.w),
+                      SizedBox(width: 1.w),
+                      Text(
+                        'Créer un post',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              child: Text(
-                'Découvrir des personnes',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
+                SizedBox(width: 3.w),
+                OutlinedButton(
+                  onPressed: () => setState(() => _selectedBottomIndex = 1),
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: Colors.blue),
+                    padding: EdgeInsets.symmetric(horizontal: 6.w, vertical: 1.5.h),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.search_rounded, size: 4.w, color: Colors.blue),
+                      SizedBox(width: 1.w),
+                      Text(
+                        'Découvrir',
+                        style: TextStyle(
+                          color: Colors.blue,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
+              ],
             ),
           ],
         ),
@@ -733,11 +770,11 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
               ),
               child: CircleAvatar(
-                backgroundImage: post.userProfileImageUrl != null
-                    ? NetworkImage(post.userProfileImageUrl!)
+                backgroundImage: post.userProfileImageUrl.isNotEmpty
+                    ? NetworkImage(post.userProfileImageUrl)
                     : null,
                 backgroundColor: Colors.grey[200],
-                child: post.userProfileImageUrl == null
+                child: post.userProfileImageUrl.isEmpty
                     ? Icon(
                   Icons.person_rounded,
                   color: Colors.grey[600],
@@ -959,8 +996,48 @@ class _HomeScreenState extends State<HomeScreen>
               ),
             ),
 
+          // Tags
+          if (post.tags.isNotEmpty) ...[
+            SizedBox(height: 1.h),
+            Wrap(
+              spacing: 1.w,
+              children: post.tags.map((tag) {
+                return Text(
+                  tag,
+                  style: TextStyle(
+                    color: Colors.blue,
+                    fontSize: 12.sp,
+                    fontWeight: FontWeight.w500,
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+
           if (post.caption.isNotEmpty)
             SizedBox(height: 1.h),
+
+          // Location
+          if (post.location != null) ...[
+            Row(
+              children: [
+                Icon(
+                  Icons.location_on_rounded,
+                  color: Colors.grey.shade600,
+                  size: 4.w,
+                ),
+                SizedBox(width: 1.w),
+                Text(
+                  post.location!,
+                  style: TextStyle(
+                    color: Colors.grey.shade600,
+                    fontSize: 12.sp,
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: 1.h),
+          ],
 
           // Time ago
           Text(
@@ -1116,38 +1193,6 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  Widget _buildCreatePostScreen() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.add_photo_alternate_rounded,
-            size: 15.w,
-            color: Colors.grey.shade400,
-          ),
-          SizedBox(height: 2.h),
-          Text(
-            'Créer un post',
-            style: TextStyle(
-              color: Colors.grey.shade600,
-              fontWeight: FontWeight.w600,
-              fontSize: 18.sp,
-            ),
-          ),
-          SizedBox(height: 1.h),
-          Text(
-            'Fonctionnalité bientôt disponible',
-            style: TextStyle(
-              color: Colors.grey.shade500,
-              fontSize: 14.sp,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildActivityScreen() {
     return Center(
       child: Column(
@@ -1264,7 +1309,7 @@ class _HomeScreenState extends State<HomeScreen>
                 title: Text('Supprimer', style: TextStyle(color: Colors.red)),
                 onTap: () {
                   Navigator.pop(context);
-                  _showErrorSnackBar('Suppression - Fonctionnalité bientôt disponible');
+                  _deletePost(post);
                 },
               ),
             ] else ...[
@@ -1313,5 +1358,44 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _showLikes(PostData post) {
     _showErrorSnackBar('Liste des likes - Fonctionnalité bientôt disponible');
+  }
+
+  void _deletePost(PostData post) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Supprimer le post?'),
+        content: Text('Cette action est irréversible.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Annuler'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              final result = await _postService.deletePost(post.id);
+              if (result.success) {
+                _showSuccessSnackBar('Post supprimé avec succès');
+              } else {
+                _showErrorSnackBar(result.errorMessage ?? 'Erreur lors de la suppression');
+              }
+            },
+            child: Text('Supprimer', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// Add these classes if they're not defined elsewhere
+class RefreshController {
+  void refreshCompleted() {}
+}
+
+class StoryService {
+  Stream<List<StoryData>> getStoriesStream() {
+    return Stream.value([]);
   }
 }
